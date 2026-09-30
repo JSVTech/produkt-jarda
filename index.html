@@ -1176,10 +1176,6 @@
 
   <div class="panel">
 
-    <!-- ===================================== -->
-    <!-- INTRO                                 -->
-    <!-- ===================================== -->
-
     <section
       id="introScreen"
       class="intro"
@@ -1259,10 +1255,6 @@
 
     </section>
 
-
-    <!-- ===================================== -->
-    <!-- SURVEY                                -->
-    <!-- ===================================== -->
 
     <section
       id="surveyScreen"
@@ -1361,10 +1353,6 @@
     </section>
 
 
-    <!-- ===================================== -->
-    <!-- ANALYSIS                              -->
-    <!-- ===================================== -->
-
     <section
       id="analysisScreen"
       class="analysis hidden"
@@ -1415,10 +1403,6 @@
 
     </section>
 
-
-    <!-- ===================================== -->
-    <!-- RESULTS                               -->
-    <!-- ===================================== -->
 
     <section
       id="resultScreen"
@@ -1541,23 +1525,29 @@
 
 <script>
 
-  /* ==========================================================
-     NASTAVENÍ
-     ========================================================== */
-
   const RESULT_EMAIL =
     "welbloudix@gmail.com";
 
-  const FORM_ENDPOINT =
+  const FORMSPREE_FORM_ID =
+    "maenvkkq";
+
+  const FORMSPREE_ENDPOINT =
+    `https://formspree.io/f/${FORMSPREE_FORM_ID}`;
+
+  const FORMSUBMIT_ENDPOINT =
     `https://formsubmit.co/ajax/${RESULT_EMAIL}`;
 
   const STORAGE_KEY =
     "produktJardaSurvey_v2";
 
+  const PENDING_SUBMISSION_KEY =
+    "produktJardaPendingSubmission_v2";
 
-  /* ==========================================================
-     OTÁZKY
-     ========================================================== */
+  const LAST_COMPLETED_SUBMISSION_KEY =
+    "produktJardaLastCompletedSubmission_v2";
+
+  const SEND_TIMEOUT_MS = 12000;
+
 
   const questions = [
 
@@ -2387,10 +2377,6 @@
   ];
 
 
-  /* ==========================================================
-     STAV A ULOŽENÍ
-     ========================================================== */
-
   let currentQuestion = 0;
 
   let answers = {};
@@ -2408,10 +2394,6 @@
 
   }
 
-
-  /* ==========================================================
-     ELEMENTY
-     ========================================================== */
 
   const introScreen =
     document.getElementById("introScreen");
@@ -2464,10 +2446,6 @@
     document.getElementById("nextBtn");
 
 
-  /* ==========================================================
-     START
-     ========================================================== */
-
   startBtn.addEventListener(
     "click",
     () => {
@@ -2490,10 +2468,6 @@
     }
   );
 
-
-  /* ==========================================================
-     RENDER QUESTION
-     ========================================================== */
 
   function renderQuestion() {
 
@@ -2578,10 +2552,6 @@
 
   }
 
-
-  /* ==========================================================
-     OPTIONS
-     ========================================================== */
 
   function renderOptions(q) {
 
@@ -2801,10 +2771,6 @@
   }
 
 
-  /* ==========================================================
-     SMILEYS
-     ========================================================== */
-
   function renderSmileys(q) {
 
     let html =
@@ -2883,10 +2849,6 @@
 
   }
 
-
-  /* ==========================================================
-     BATTERY
-     ========================================================== */
 
   function renderBattery(q) {
 
@@ -2976,10 +2938,6 @@
   }
 
 
-  /* ==========================================================
-     TEXT QUESTIONS
-     ========================================================== */
-
   function renderTextQuestion(q) {
 
     const value =
@@ -3041,10 +2999,6 @@
   }
 
 
-  /* ==========================================================
-     NEXT
-     ========================================================== */
-
   nextBtn.addEventListener(
     "click",
     () => {
@@ -3097,10 +3051,6 @@
   );
 
 
-  /* ==========================================================
-     BACK
-     ========================================================== */
-
   backBtn.addEventListener(
     "click",
     () => {
@@ -3125,10 +3075,6 @@
     }
   );
 
-
-  /* ==========================================================
-     VALIDATE
-     ========================================================== */
 
   function validateQuestion(q) {
 
@@ -3210,10 +3156,6 @@
   }
 
 
-  /* ==========================================================
-     SELECTED
-     ========================================================== */
-
   function isSelected(
     q,
     value
@@ -3247,10 +3189,6 @@
   }
 
 
-  /* ==========================================================
-     FINISH
-     ========================================================== */
-
   async function finishSurvey() {
 
     saveState();
@@ -3264,6 +3202,10 @@
       createSubmissionPayload(
         score
       );
+
+
+    saveCompletedBackup(payload);
+    savePendingSubmission(payload);
 
 
     surveyScreen.classList.add(
@@ -3282,15 +3224,15 @@
     });
 
 
-    /*
-      Výsledky se odešlou na mail.
-      Případná chyba odeslání nezastaví dotazník.
-    */
-
-    sendResults(payload);
+    const deliveryPromise =
+      sendResultsReliably(payload);
 
 
     await runAnalysis();
+
+
+    const delivery =
+      await deliveryPromise;
 
 
     analysisScreen.classList.add(
@@ -3306,9 +3248,32 @@
     renderResult(score);
 
 
-    localStorage.removeItem(
-      STORAGE_KEY
-    );
+    if (delivery.confirmed) {
+
+      localStorage.removeItem(
+        STORAGE_KEY
+      );
+
+      localStorage.removeItem(
+        PENDING_SUBMISSION_KEY
+      );
+
+      console.log(
+        "✅ Výsledky bezpečně přijaty alespoň jednou službou:",
+        delivery
+      );
+
+    }
+
+    else {
+
+      console.error(
+        "❌ Odeslání zatím nepotvrdila žádná služba. " +
+        "Kompletní odpovědi zůstávají uložené v prohlížeči a odešlou se znovu později.",
+        delivery
+      );
+
+    }
 
 
     window.scrollTo({
@@ -3319,11 +3284,156 @@
   }
 
 
-  /* ==========================================================
-     EMAIL / FORMSUBMIT
-     ========================================================== */
+  function createDeliveryData(payload) {
 
-  async function sendResults(payload) {
+    const data = {
+
+      "Submission ID":
+        payload.submissionId,
+
+      "Celkový stav produktu":
+        `${payload.score} %`,
+
+      "Datum vyplnění":
+        payload.timestamp,
+
+      "ISO čas":
+        payload.isoTimestamp
+
+    };
+
+
+    questions.forEach(
+      (question, index) => {
+
+        data[
+          `${index + 1}. ${question.title}`
+        ] =
+          payload.answers[question.id]
+          || "Bez odpovědi";
+
+      }
+    );
+
+
+    return data;
+
+  }
+
+
+  async function fetchWithTimeout(
+    url,
+    options,
+    timeoutMs = SEND_TIMEOUT_MS
+  ) {
+
+    const controller =
+      new AbortController();
+
+
+    const timer =
+      setTimeout(
+        () => controller.abort(),
+        timeoutMs
+      );
+
+
+    try {
+
+      return await fetch(
+        url,
+        {
+          ...options,
+          signal: controller.signal
+        }
+      );
+
+    }
+
+    finally {
+
+      clearTimeout(timer);
+
+    }
+
+  }
+
+
+  function wait(ms) {
+
+    return new Promise(
+      resolve => setTimeout(resolve, ms)
+    );
+
+  }
+
+
+  async function sendToFormspree(
+    deliveryData,
+    payload
+  ) {
+
+    const body = {
+
+      _subject:
+        `Produkt Jarda™ – nové hodnocení ${payload.score} %`,
+
+      ...deliveryData
+
+    };
+
+
+    const response =
+      await fetchWithTimeout(
+        FORMSPREE_ENDPOINT,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+
+            "Accept":
+              "application/json"
+          },
+
+          body:
+            JSON.stringify(body)
+        }
+      );
+
+
+    let result = null;
+
+    try {
+      result = await response.json();
+    }
+    catch (_) {}
+
+
+    if (!response.ok) {
+
+      throw new Error(
+        `Formspree HTTP ${response.status}`
+      );
+
+    }
+
+
+    return {
+      ok: true,
+      service: "Formspree",
+      status: response.status,
+      result
+    };
+
+  }
+
+
+  async function sendToFormSubmit(
+    deliveryData,
+    payload
+  ) {
 
     const emailData = {
 
@@ -3336,61 +3446,200 @@
       _captcha:
         "false",
 
-      "Celkový stav produktu":
-        `${payload.score} %`,
-
-      "Datum vyplnění":
-        payload.timestamp
+      ...deliveryData
 
     };
 
 
-    questions.forEach(
-      (question, index) => {
+    const response =
+      await fetchWithTimeout(
+        FORMSUBMIT_ENDPOINT,
+        {
+          method: "POST",
 
-        emailData[
-          `${index + 1}. ${question.title}`
-        ] =
-          payload.answers[question.id]
-          || "Bez odpovědi";
+          headers: {
+            "Content-Type":
+              "application/json",
+
+            "Accept":
+              "application/json"
+          },
+
+          body:
+            JSON.stringify(emailData)
+        }
+      );
+
+
+    let result = null;
+
+    try {
+      result = await response.json();
+    }
+    catch (_) {}
+
+
+    if (!response.ok) {
+
+      throw new Error(
+        `FormSubmit HTTP ${response.status}`
+      );
+
+    }
+
+
+    if (
+      result &&
+      result.success === false
+    ) {
+
+      throw new Error(
+        "FormSubmit submission odmítl."
+      );
+
+    }
+
+
+    return {
+      ok: true,
+      service: "FormSubmit",
+      status: response.status,
+      result
+    };
+
+  }
+
+
+  async function attemptService(
+    serviceName,
+    sendFunction,
+    retries = 2
+  ) {
+
+    let lastError = null;
+
+
+    for (
+      let attempt = 0;
+      attempt <= retries;
+      attempt++
+    ) {
+
+      try {
+
+        const result =
+          await sendFunction();
+
+
+        if (
+          result &&
+          result.ok
+        ) {
+
+          return result;
+
+        }
 
       }
-    );
 
+      catch (error) {
+
+        lastError = error;
+
+        console.warn(
+          `${serviceName}: pokus ${attempt + 1} selhal`,
+          error
+        );
+
+      }
+
+
+      if (attempt < retries) {
+
+        await wait(
+          1200 * (attempt + 1)
+        );
+
+      }
+
+    }
+
+
+    return {
+      ok: false,
+      service: serviceName,
+      error:
+        lastError
+          ? String(
+              lastError.message ||
+              lastError
+            )
+          : "Neznámá chyba"
+    };
+
+  }
+
+
+  async function sendResultsReliably(
+    payload
+  ) {
+
+    const deliveryData =
+      createDeliveryData(payload);
+
+
+    const [
+      formspree,
+      formsubmit
+    ] =
+      await Promise.all([
+
+        attemptService(
+          "Formspree",
+          () =>
+            sendToFormspree(
+              deliveryData,
+              payload
+            ),
+          2
+        ),
+
+        attemptService(
+          "FormSubmit",
+          () =>
+            sendToFormSubmit(
+              deliveryData,
+              payload
+            ),
+          1
+        )
+
+      ]);
+
+
+    return {
+      confirmed:
+        !!(
+          formspree.ok ||
+          formsubmit.ok
+        ),
+
+      formspree,
+      formsubmit
+    };
+
+  }
+
+
+  function saveCompletedBackup(
+    payload
+  ) {
 
     try {
 
-      const response =
-        await fetch(
-          FORM_ENDPOINT,
-          {
-            method: "POST",
-
-            headers: {
-
-              "Content-Type":
-                "application/json",
-
-              "Accept":
-                "application/json"
-
-            },
-
-            body:
-              JSON.stringify(
-                emailData
-              )
-          }
-        );
-
-
-      const result =
-        await response.json();
-
-
-      console.log(
-        "Výsledky odeslány:",
-        result
+      localStorage.setItem(
+        LAST_COMPLETED_SUBMISSION_KEY,
+        JSON.stringify(payload)
       );
 
     }
@@ -3398,7 +3647,7 @@
     catch (error) {
 
       console.error(
-        "Chyba při odesílání výsledků:",
+        "Nepodařilo se uložit dokončenou lokální kopii.",
         error
       );
 
@@ -3407,9 +3656,125 @@
   }
 
 
-  /* ==========================================================
-     ANALYSIS ANIMATION
-     ========================================================== */
+  function savePendingSubmission(
+    payload
+  ) {
+
+    try {
+
+      localStorage.setItem(
+        PENDING_SUBMISSION_KEY,
+        JSON.stringify(payload)
+      );
+
+    }
+
+    catch (error) {
+
+      console.error(
+        "Nepodařilo se uložit pending kopii.",
+        error
+      );
+
+    }
+
+  }
+
+
+  function loadPendingSubmission() {
+
+    try {
+
+      const raw =
+        localStorage.getItem(
+          PENDING_SUBMISSION_KEY
+        );
+
+
+      return raw
+        ? JSON.parse(raw)
+        : null;
+
+    }
+
+    catch (_) {
+
+      return null;
+
+    }
+
+  }
+
+
+  let pendingRetryRunning =
+    false;
+
+
+  async function retryPendingSubmission() {
+
+    if (pendingRetryRunning) {
+      return;
+    }
+
+
+    const pending =
+      loadPendingSubmission();
+
+
+    if (!pending) {
+      return;
+    }
+
+
+    pendingRetryRunning =
+      true;
+
+
+    try {
+
+      const delivery =
+        await sendResultsReliably(
+          pending
+        );
+
+
+      if (delivery.confirmed) {
+
+        localStorage.removeItem(
+          PENDING_SUBMISSION_KEY
+        );
+
+        localStorage.removeItem(
+          STORAGE_KEY
+        );
+
+        console.log(
+          "✅ Dříve neodeslaný dotazník byl dodatečně doručen.",
+          delivery
+        );
+
+      }
+
+    }
+
+    catch (error) {
+
+      console.warn(
+        "Automatický retry se nepodařil:",
+        error
+      );
+
+    }
+
+    finally {
+
+      pendingRetryRunning =
+        false;
+
+    }
+
+  }
+
 
   function runAnalysis() {
 
@@ -3531,10 +3896,6 @@
   }
 
 
-  /* ==========================================================
-     SCORE
-     ========================================================== */
-
   function calculateScore() {
 
     const scoredQuestions = [
@@ -3615,10 +3976,6 @@
 
   }
 
-
-  /* ==========================================================
-     RESULTS
-     ========================================================== */
 
   function renderResult(score) {
 
@@ -3715,10 +4072,6 @@
       description;
 
 
-    /* ----------------------------
-       PŘEDNOSTI
-       ---------------------------- */
-
     const strengths =
       getSelectedValues(
         "q4"
@@ -3748,10 +4101,6 @@
            </li>`;
 
 
-    /* ----------------------------
-       BUGS
-       ---------------------------- */
-
     const bugs =
       getSelectedValues(
         "q3"
@@ -3779,10 +4128,6 @@
             Výrazné známé závady nebyly zaznamenány.
            </li>`;
 
-
-    /* ----------------------------
-       UPDATE
-       ---------------------------- */
 
     const updates = [];
 
@@ -3877,10 +4222,6 @@
   }
 
 
-  /* ==========================================================
-     PAYLOAD
-     ========================================================== */
-
   function createSubmissionPayload(
     score
   ) {
@@ -3966,13 +4307,33 @@
     );
 
 
+    const now =
+      new Date();
+
+
+    const submissionId =
+      (
+        window.crypto &&
+        typeof window.crypto.randomUUID ===
+          "function"
+      )
+        ? window.crypto.randomUUID()
+        : `jarda-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2)}`;
+
+
     return {
 
+      submissionId,
+
       timestamp:
-        new Date()
-          .toLocaleString(
-            "cs-CZ"
-          ),
+        now.toLocaleString(
+          "cs-CZ"
+        ),
+
+      isoTimestamp:
+        now.toISOString(),
 
       score,
 
@@ -3983,10 +4344,6 @@
 
   }
 
-
-  /* ==========================================================
-     SELECTED VALUES
-     ========================================================== */
 
   function getSelectedValues(id) {
 
@@ -4038,10 +4395,6 @@
 
   }
 
-
-  /* ==========================================================
-     LOCAL STORAGE
-     ========================================================== */
 
   function saveState() {
 
@@ -4100,9 +4453,17 @@
   }
 
 
-  /* ==========================================================
-     ESCAPE HTML
-     ========================================================== */
+  window.addEventListener(
+    "online",
+    () => retryPendingSubmission()
+  );
+
+
+  setTimeout(
+    () => retryPendingSubmission(),
+    2500
+  );
+
 
   function escapeHtml(
     value = ""
